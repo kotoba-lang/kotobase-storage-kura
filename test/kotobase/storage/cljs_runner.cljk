@@ -1,5 +1,5 @@
 (ns kotobase.storage.cljs-runner
-  "  clojure -M:cljs -m cljs.main --target node --output-dir target/node-out \\
+  "  kbb -M:cljs -m cljs.main --target node --output-dir target/node-out \\
       --output-to target/tests.cjs -c kotobase.storage.cljs-runner
   echo '{\"type\":\"commonjs\"}' > target/node-out/package.json
   node target/tests.cjs
