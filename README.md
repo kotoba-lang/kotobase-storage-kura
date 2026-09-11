@@ -61,9 +61,9 @@ domain here, which is the point.
 ## Tests
 
 ```bash
-clojure -M:test
-clojure -M:cljs -m cljs.main --target node -m kotobase.storage.cljs-runner
-clojure -M:lint
+kbb -M:test
+kbb -M:cljs -m cljs.main --target node -m kotobase.storage.cljs-runner
+kbb -M:lint
 ```
 
 The suite runs `kotobase.storage.contract/verify` — the upstream conformance
