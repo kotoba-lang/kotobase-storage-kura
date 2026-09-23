@@ -1,5 +1,5 @@
 (ns kotobase.storage.kura-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [erasure.lrc :as lrc]
             [kotobase.storage.contract :as kcontract]
             [kotobase.storage.core :as storage]
