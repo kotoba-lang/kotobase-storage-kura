@@ -19,7 +19,8 @@
 
 (defn- placement-cfg [ids]
   {:group-count 256
-   :nodes (mapv #(placement/node {:id % :domains {:rack %}}) ids)
+   :nodes (mapv #(placement/node {:id % :domains {:rack %}
+                                  :availability :always-on}) ids)
    :pol (placement/policy {:caps {:rack 1}})})
 
 (defn- backend

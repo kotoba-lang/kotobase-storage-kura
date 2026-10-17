@@ -50,6 +50,51 @@ a mixed workload is a mixture and not either constant:
 ;; {:blocks 100 :multiplier 2.06 :erasure-coded 10 :replicated 90 ...}
 ```
 
+## Async CARv2 path
+
+`kotobase.storage.kura.async/open` is the Worker/Node path for an asynchronous
+Kura fleet. It packs verified blocks into bounded CARv2 objects, puts each
+archive through `kura.node.object/put-object!>`, then publishes a durable
+CID-to-frame manifest through a linearizable CAS catalog. One
+content-addressed manifest block is shared by every CID in the pack, while
+each CID gets its own CAS pointer; batch reads fetch each shared manifest only
+once. The shard placement and LRC geometry are recorded so a process restart
+can address the original nodes after the fleet grows.
+
+Reads request only the CAR frame's data-shard ranges when every Kura node
+advertises true range reads. If one range is missing or unreachable, the
+adapter fetches only that stripe's local data and parity ranges and XORs the
+requested slice. It falls back to full Kura object reconstruction only if
+local recovery also fails; that path verifies the archive digest before the
+requested block is returned. Both paths verify the block with the injected
+`:verify-block` function. The verifier is required because CAR framing supports
+CIDv1 codecs such as dag-pb, while the CAR helper's built-in hashing currently
+covers raw and dag-cbor blocks.
+`repair-block!>` verifies and repairs the containing Kura pack and returns a
+local receipt candidate with bytes rewritten and recorded placement. A
+coordinator must add the signed order, provider identity and repair deadline
+before using that evidence in YATA reward scoring.
+
+The namespace defaults to 4 MiB CAR packs and a 4 MiB Kura stripe ceiling.
+Small packs choose a smaller one-stripe geometry, so their erasure overhead
+stays near the configured LRC multiplier instead of padding every object to a
+large fixed stripe. This reduces block-level requests and catalog lookups per
+archive; it does not establish lower end-to-end latency or TCO.
+
+The adapter receives `:plan-placement` from the coordinator. The callback must
+use Kura's deterministic placement policy, including region/failure-domain
+caps and the committed regional-demand generation. The current async
+`kura-node` pin depends on an older Kura commit that does not contain
+`kura.placement`; keeping the coordinator placement module injected avoids
+silently compiling against a different copy/version of those decisions. The
+callback is mandatory, but a signed order and placement-generation migration
+path are still not wired into this draft.
+
+This adapter is an implementation draft until its async store, restart, CID
+codec, and range-read paths are exercised. It does not enable customer-data
+mode: `kura-node` still requires signed-order admission and coordinator-key
+wiring before the service can accept those writes.
+
 ## Durability is the fleet's, not the code's
 
 `durability-report` delegates to `kura.node.store/audit`. The question a
@@ -62,8 +107,7 @@ domain here, which is the point.
 
 ```bash
 kbb -M:test
-kbb -M:cljs -m cljs.main --target node -m kotobase.storage.cljs-runner
-kbb -M:lint
+clojure -M:lint
 ```
 
 The suite runs `kotobase.storage.contract/verify` — the upstream conformance

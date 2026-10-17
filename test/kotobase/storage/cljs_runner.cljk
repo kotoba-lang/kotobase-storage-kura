@@ -20,7 +20,8 @@
   ESM and die on `require`. The marker scopes target/node-out back to
   CommonJS."
   (:require [kotoba.test :as t :refer [run-tests]]
-            [kotobase.storage.kura-test]))
+            [kotobase.storage.kura-test]
+            [kotobase.storage.kura.async-test]))
 
 #?(:cljs
    (defmethod t/report [:cljs.test/default :end-run-tests] [m]
