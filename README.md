@@ -90,8 +90,14 @@ silently compiling against a different copy/version of those decisions. The
 callback is mandatory, but a signed order and placement-generation migration
 path are still not wired into this draft.
 
-This adapter is an implementation draft until its async store, restart, CID
-codec, and range-read paths are exercised. It does not enable customer-data
+The Node tests exercise async range recovery with in-memory shard stores and
+catalog-index recovery after closing and reopening a test-only file-backed
+catalog. The restart case keeps the fake shard stores alive in process memory,
+so it qualifies catalog serialization and lookup across a backend reopen; it
+does not qualify durable Kura shard storage, multi-writer CAS, or a deployed
+catalog implementation.
+This adapter remains an implementation draft until its production async store,
+CID codec, and range-read paths are exercised. It does not enable customer-data
 mode: `kura-node` still requires signed-order admission and coordinator-key
 wiring before the service can accept those writes.
 

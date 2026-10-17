@@ -6,8 +6,78 @@
             [kura.node.async :as shard-async]
             [kura.node.gf :as gf]
             [kura.node.store :as node-store]
-            [multiformats.core :as mf])
+            [multiformats.core :as mf]
+            ["node:fs" :as fs]
+            ["node:os" :as os]
+            ["node:path" :as path])
   (:require-macros [cljs.test :refer [deftest is async]]))
+
+(defn- persist-test-catalog! [file-path state]
+  (let [blocks (into {}
+                     (map (fn [[cid bytes]]
+                            [cid (.toString (js/Buffer.from bytes) "base64")]))
+                     (:blocks state))
+        encoded (js/JSON.stringify
+                 (clj->js {:blocks blocks :refs (:refs state)}))
+        temporary-path (str file-path ".tmp-" (gensym))]
+    (.writeFileSync fs temporary-path encoded)
+    (.renameSync fs temporary-path file-path)))
+
+;; Test-only single-process catalog; it is not a production multi-writer store.
+(defrecord FileTestCatalog [file-path state]
+  storage/IBlockStore
+  (-put-blocks! [_ blocks]
+    (let [current @state
+          next (update current :blocks
+                       (fn [stored]
+                         (reduce (fn [out {:keys [cid bytes]}]
+                                   (if-let [existing (get out cid)]
+                                     (if (= (gf/->vec existing) (gf/->vec bytes))
+                                       out
+                                       (throw (ex-info "durable test catalog CID collision"
+                                                       {:cid cid})))
+                                     (assoc out cid (js/Buffer.from bytes))))
+                                 stored blocks)))]
+      (persist-test-catalog! file-path next)
+      (reset! state next)
+      (mapv :cid blocks)))
+  (-get-blocks [_ cids]
+    (select-keys (:blocks @state) cids))
+
+  storage/IRefStore
+  (-read-ref [_ name] (get-in @state [:refs name]))
+  (-compare-and-set-ref! [_ name expected next-cid]
+    (let [current @state
+          present (get-in current [:refs name])
+          actual (:cid present)]
+      (if (= expected actual)
+        (let [version (inc (or (:version present) 0))
+              ref {:cid next-cid :version version}
+              next (assoc-in current [:refs name] ref)]
+          (persist-test-catalog! file-path next)
+          (reset! state next)
+          {:published? true :current next-cid :version version})
+        {:published? false :current actual :version (:version present)})))
+
+  storage/IBackendCapabilities
+  (-capabilities [_]
+    #{:immutable-blocks :cid-addressed-read :conditional-ref
+      :linearizable-ref :batch-get :batch-put :local-file :atomic-replace}))
+
+(defn- open-file-test-catalog [file-path]
+  (let [stored (when (.existsSync fs file-path)
+                 (js->clj (.parse js/JSON (.readFileSync fs file-path "utf8"))))
+        blocks (into {}
+                     (map (fn [[cid encoded]]
+                            [cid (js/Buffer.from encoded "base64")]))
+                     (get stored "blocks" {}))
+        refs (into {}
+                   (map (fn [[name ref]]
+                          [name {:cid (get ref "cid")
+                                 :version (get ref "version")}]))
+                   (get stored "refs" {}))
+        state (atom {:blocks blocks :refs refs})]
+    (->FileTestCatalog file-path state)))
 
 (defrecord FakeAsyncStore [id state descriptor]
   shard-async/IAsyncShardStore
@@ -59,24 +129,30 @@
                              :range-reads [] :full-reads []})
                       descriptor)))
 
-(defn- backend-fixture []
-  (let [ids (mapv #(str "node-" %) (range 7))
-        fleet (into {} (map (fn [id] [id (fake-store id)]) ids))
-        placement-context {:nodes (mapv (fn [id] {:id id}) ids)}
-        backend (sut/open
-                 {:fleet fleet
-                  :plan-placement
-                  (fn [_object-id layout _context]
-                    {:complete? true
-                     :shortfall 0
-                     :shards (zipmap (range (:n layout)) ids)})
-                  :placement-context placement-context
-                  :catalog (catalog-memory/memory-store)
-                  :verify-block (fn [_cid _bytes] true)
-                  :max-pack-bytes 1024
-                  :max-stripe-bytes 1024
-                  :layout {:k 4 :r 2 :g 1}})]
-    {:ids ids :fleet fleet :backend backend}))
+(defn- backend-for [ids fleet placement-context catalog]
+  (sut/open
+   {:fleet fleet
+    :plan-placement
+    (fn [_object-id layout _context]
+      {:complete? true
+       :shortfall 0
+       :shards (zipmap (range (:n layout)) ids)})
+    :placement-context placement-context
+    :catalog catalog
+    :verify-block (fn [_cid _bytes] true)
+    :max-pack-bytes 1024
+    :max-stripe-bytes 1024
+    :layout {:k 4 :r 2 :g 1}}))
+
+(defn- backend-fixture
+  ([] (backend-fixture (catalog-memory/memory-store)))
+  ([catalog]
+   (let [ids (mapv #(str "node-" %) (range 7))
+         fleet (into {} (map (fn [id] [id (fake-store id)]) ids))
+         placement-context {:nodes (mapv (fn [id] {:id id}) ids)}
+         backend (backend-for ids fleet placement-context catalog)]
+     {:ids ids :fleet fleet :placement-context placement-context
+      :catalog catalog :backend backend})))
 
 (defn- block-fixture []
   (let [bytes (gf/->bytes (mapv #(mod (+ (* 17 %) 5) 256) (range 200)))]
@@ -84,6 +160,35 @@
 
 (defn- mark-unavailable! [store shard-id]
   (swap! (:state store) update :unavailable conj shard-id))
+
+(deftest cid-index-survives-reopening-a-file-backed-catalog
+  (async done
+    (let [directory (.mkdtempSync fs (.join path (.tmpdir os) "kura-catalog-restart-"))
+          catalog-path (.join path directory "catalog.json")
+          catalog (open-file-test-catalog catalog-path)
+          open-catalog (atom catalog)
+          {:keys [ids fleet placement-context backend]}
+          (backend-fixture catalog)
+          {:keys [cid bytes]} (block-fixture)
+          cleanup (fn []
+                    (reset! open-catalog nil)
+                    (try (.rmSync fs directory #js {:recursive true :force true})
+                         (catch :default _ nil)))]
+      (-> (storage/-put-blocks! backend [{:cid cid :bytes bytes}])
+          (.then (fn [_]
+                   (reset! (:state catalog) nil)
+                   (let [reopened (open-file-test-catalog catalog-path)
+                         backend-after-restart
+                         (backend-for ids fleet placement-context reopened)]
+                     (reset! open-catalog reopened)
+                     (storage/-get-blocks backend-after-restart [cid]))))
+          (.then (fn [blocks]
+                   (is (= (gf/->vec bytes)
+                          (gf/->vec (get blocks cid)))
+                       "reopened catalog resolves the CID to its CARv2 frame")))
+          (.catch (fn [error]
+                    (is false (str "durable catalog restart read failed: " error))))
+          (.finally (fn [] (cleanup) (done)))))))
 
 (deftest missing-data-range-uses-local-parity-before-full-pack-read
   (async done
