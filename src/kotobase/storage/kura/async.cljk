@@ -229,11 +229,6 @@
 (defn- pack-plan [ctx pack-object-id archive-size placement-ids]
   (geometry ctx pack-object-id archive-size placement-ids))
 
-(defn- delete-pack!> [ctx plan placement-ids]
-  (kura-object/delete-object!>
-   {:plan plan
-    :store-for (stores-for ctx placement-ids)}))
-
 (defn- publish-pack-manifests> [backend blocks manifest-cid]
   (reduce (fn [state-promise batch]
             (-> state-promise
@@ -293,14 +288,6 @@
           :bytes archive})
         (.then (fn [receipt]
                  (persist-pack-manifest> backend blocks catalog-block receipt)))
-        (.then (fn [state]
-                 ;; A fully answered set of losing CAS operations means another
-                 ;; writer published every block first, so this pack is safe to
-                 ;; remove. A rejected/ambiguous CAS leaves it in place.
-                 (if (zero? (:published state))
-                   (-> (delete-pack!> ctx plan placement-ids)
-                       (.then (fn [_] state)))
-                   state)))
         (.then (fn [state]
                  (assoc state
                         :pack-cid pack-cid

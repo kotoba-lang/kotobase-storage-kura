@@ -60,6 +60,10 @@ content-addressed manifest block is shared by every CID in the pack, while
 each CID gets its own CAS pointer; batch reads fetch each shared manifest only
 once. The shard placement and LRC geometry are recorded so a process restart
 can address the original nodes after the fleet grows.
+Pack objects can be shared by concurrent identical writes, so this adapter
+never deletes a pack as rollback or after losing a catalog CAS. Catalog-aware
+garbage collection must verify that no CID refs point to an object before
+removing it.
 
 Reads request only the CAR frame's data-shard ranges when every Kura node
 advertises true range reads. If one range is missing or unreachable, the
