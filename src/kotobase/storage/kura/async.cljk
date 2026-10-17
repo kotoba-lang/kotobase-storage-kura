@@ -251,12 +251,12 @@
           (js/Promise.resolve {:published 0 :contended 0})
           (partition-all default-max-catalog-cas-inflight blocks)))
 
-(defn- persist-pack-manifest> [backend ctx plan placement-ids blocks catalog-block receipt]
+(defn- persist-pack-manifest> [backend blocks catalog-block receipt]
+  ;; Catalog writes can fail ambiguously after the manifest was stored. A
+  ;; concurrent writer may already have published refs to this shared,
+  ;; content-addressed pack, so leave it for catalog-aware garbage collection
+  ;; instead of deleting data that may now be reachable.
   (-> (promise (storage/-put-blocks! (:catalog backend) [catalog-block]))
-      (.catch (fn [error]
-                (-> (delete-pack!> ctx plan placement-ids)
-                    (.catch (fn [_] nil))
-                    (.then (fn [_] (throw error))))))
       (.then (fn [_]
                (-> (publish-pack-manifests> backend blocks (:cid catalog-block))
                    (.then (fn [state] (assoc state :receipt receipt))))))))
@@ -292,8 +292,7 @@
           :digest digest
           :bytes archive})
         (.then (fn [receipt]
-                 (persist-pack-manifest> backend ctx plan placement-ids
-                                         blocks catalog-block receipt)))
+                 (persist-pack-manifest> backend blocks catalog-block receipt)))
         (.then (fn [state]
                  ;; A fully answered set of losing CAS operations means another
                  ;; writer published every block first, so this pack is safe to
