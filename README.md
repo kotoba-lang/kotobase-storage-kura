@@ -116,9 +116,17 @@ domain here, which is the point.
 ## Tests
 
 ```bash
-kbb -M:test
-clojure -M:lint
+python3 scripts/test-hosts.py /absolute/github/workspaces/kura-tests
 ```
+
+This command runs the JVM suite and the emitted Node bundle from the pinned
+ClojureScript compiler. It checks that every test namespace is actually run,
+including the async suite, and records the source-view byte hashes. The
+compiled suite uses the shared `kotoba.test.cljs` bridge from the immutable
+Kotoba monorepo package; the existing JVM/SCI API is unchanged. These are
+compatibility-host checks. Amu native/Wasm, production Kura shard durability,
+multi-writer catalog qualification and signed-order admission remain separate.
+No live fleet, endpoint, token or deployment is changed by these tests.
 
 The suite runs `kotobase.storage.contract/verify` — the upstream conformance
 suite — so passing is a statement about the contract, not about this repo's
@@ -126,4 +134,4 @@ own opinion of it.
 
 ## License
 
-MIT.
+Apache-2.0. See `LICENSE`.

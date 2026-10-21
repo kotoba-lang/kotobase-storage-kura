@@ -30,7 +30,11 @@
          :main-opts ["-m" "cognitect.test-runner"]
          :exec-fn cognitect.test-runner.api/test}
   :cljs {:extra-paths ["test"]
-         :extra-deps {org.clojure/clojurescript {:mvn/version "1.11.132"}}}
+         :extra-deps {org.clojure/clojurescript {:mvn/version "1.11.132"}
+                      io.github.kotoba-lang/kotoba-test-cljs
+                      {:git/url "https://github.com/kotoba-lang/kotoba.git"
+                       :git/sha "f0ecb24b722664b825ab89992e9cc98c37ecaaf0"
+                       :deps/root "lib/kotoba.test/compiled"}}}
   :lint {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2024.11.14"}}
          :main-opts ["-m" "clj-kondo.main" "--lint" "src" "test"
                      "--fail-level" "error"]}}}

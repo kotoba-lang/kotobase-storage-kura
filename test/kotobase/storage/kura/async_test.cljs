@@ -7,9 +7,9 @@
             [kura.node.gf :as gf]
             [kura.node.store :as node-store]
             [multiformats.core :as mf]
-            ["node:fs" :as fs]
-            ["node:os" :as os]
-            ["node:path" :as path])
+            ["fs" :as fs]
+            ["os" :as os]
+            ["path" :as path])
   (:require-macros [cljs.test :refer [deftest is async]]))
 
 (defn- persist-test-catalog! [file-path state]
@@ -139,7 +139,7 @@
        :shards (zipmap (range (:n layout)) ids)})
     :placement-context placement-context
     :catalog catalog
-    :verify-block (fn [_cid _bytes] true)
+    :verify-block (fn [cid bytes] (= cid (mf/cidv1-raw bytes)))
     :max-pack-bytes 1024
     :max-stripe-bytes 1024
     :layout {:k 4 :r 2 :g 1}}))
@@ -236,3 +236,64 @@
           (.catch (fn [error]
                     (is false (str "verified full-pack fallback failed: " error))
                     (done)))))))
+
+;; A winner already published this deterministic pack. A racing writer sees
+;; an old empty catalog read and either loses CAS or gets an ambiguous error.
+;; In every case the winner must still be able to read its committed bytes.
+(defrecord RacingCatalog [inner fail-at]
+  storage/IBlockStore
+  (-put-blocks! [_ blocks]
+    (let [result (storage/-put-blocks! inner blocks)]
+      (when (= :manifest fail-at)
+        (throw (js/Error. "ambiguous manifest publication")))
+      result))
+  (-get-blocks [_ cids] (storage/-get-blocks inner cids))
+  storage/IRefStore
+  (-read-ref [_ name]
+    (when-not (.startsWith name sut/catalog-prefix)
+      (storage/-read-ref inner name)))
+  (-compare-and-set-ref! [_ name expected next-cid]
+    (let [result (storage/-compare-and-set-ref! inner name expected next-cid)]
+      (when (= :cas fail-at)
+        (throw (js/Error. "ambiguous catalog CAS")))
+      result))
+  storage/IBackendCapabilities
+  (-capabilities [_] (storage/-capabilities inner)))
+
+(deftest racing-writer-never-removes-the-winners-shared-pack
+  (async done
+    (-> (reduce
+         (fn [previous fail-at]
+           (.then previous
+             (fn [_]
+               (let [{:keys [ids fleet placement-context catalog backend]}
+                     (backend-fixture)
+                     block (block-fixture)
+                     loser (backend-for ids fleet placement-context
+                                        (->RacingCatalog catalog fail-at))]
+                 (-> (storage/-put-blocks! backend [block])
+                     (.then (fn [_]
+                              (-> (storage/-put-blocks! loser [block])
+                                  (.then (fn [result]
+                                           (is (nil? fail-at))
+                                           (is (= 1 (:contended (first result))))))
+                                  (.catch (fn [error]
+                                            (is (some? fail-at))
+                                            (is (.includes (.-message error) "ambiguous")))))))
+                     (.then (fn [_] (storage/-get-blocks backend [(:cid block)])))
+                     (.then (fn [found]
+                              (is (= (gf/->vec (:bytes block))
+                                     (gf/->vec (get found (:cid block))))
+                                  (str "winner survives racing mode " fail-at)))))))))
+         (js/Promise.resolve nil)
+         [nil :manifest :cas])
+        (.catch (fn [error]
+                  (is false (str "racing writer destroyed published data: " error))))
+        (.finally done))))
+
+(deftest rejected-block-is-never-written-to-the-shard-fleet
+  (let [{:keys [fleet backend]} (backend-fixture)
+        {:keys [cid]} (block-fixture)]
+    (is (thrown? js/Error
+                 (storage/-put-blocks! backend [{:cid cid :bytes (gf/->bytes [1 2 3])}])))
+    (is (every? #(empty? (:shards @(:state %))) (vals fleet)))))

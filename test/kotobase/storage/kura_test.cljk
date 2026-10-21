@@ -1,5 +1,7 @@
 (ns kotobase.storage.kura-test
-  (:require [kotoba.test :refer [deftest is testing]]
+  (:require #?(:org.babashka/nbb [kotoba.test :refer [deftest is testing]]
+               :clj [kotoba.test :refer [deftest is testing]]
+               :cljs [kotoba.test.cljs :refer-macros [deftest is testing]])
             [erasure.lrc :as lrc]
             [kotobase.storage.contract :as kcontract]
             [kotobase.storage.core :as storage]
