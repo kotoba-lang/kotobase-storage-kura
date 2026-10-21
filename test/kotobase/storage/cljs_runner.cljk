@@ -19,15 +19,19 @@
   `\"type\": \"module\"`, which makes node read Closure's emitted .js as
   ESM and die on `require`. The marker scopes target/node-out back to
   CommonJS."
-  (:require [kotoba.test :as t :refer [run-tests]]
-            [kotobase.storage.kura-test]))
+  (:require #?(:org.babashka/nbb [kotoba.test :as t :refer [run-tests]]
+               :clj [kotoba.test :as t :refer [run-tests]]
+               :cljs [kotoba.test.cljs :as t :refer-macros [run-tests]])
+            [kotobase.storage.kura-test]
+            [kotobase.storage.kura.async-test]))
 
 #?(:cljs
    (defmethod t/report [:cljs.test/default :end-run-tests] [m]
      (when-not (t/successful? m)
        (set! (.-exitCode js/process) 1))))
 
-(defn -main [] (run-tests 'kotobase.storage.kura-test))
+(defn -main []
+  (run-tests 'kotobase.storage.kura-test 'kotobase.storage.kura.async-test))
 
 ;; The compiled node bundle runs `cljs.nodejscli`, which calls whatever
 ;; `*main-cli-fn*` names. Without this the bundle loads every namespace,

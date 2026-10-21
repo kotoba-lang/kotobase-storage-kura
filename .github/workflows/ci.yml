@@ -37,14 +37,5 @@ jobs:
           key: ${{ runner.os }}-clj-${{ hashFiles('deps.edn') }}
           restore-keys: ${{ runner.os }}-clj-
 
-      # The JVM run is the only one that can host the .kotoba parity gate
-      # (kotoba-lang/compiler is JVM-only), so it is not merely a compat gate
-      # here — it is where the port is held to equality with the reference.
-      - name: JVM tests (JVM)
-        run: clojure -M:test
-
-      - name: CLJS tests (portable suite, real ClojureScript, node target)
-        run: clojure -M:cljs -m cljs.main --target node -m kotobase.storage.cljs-runner
-
-      - name: Lint (clj-kondo, errors fail)
-        run: clojure -M:lint
+      - name: JVM, compiled Node suites and lint (compatibility hosts)
+        run: python3 scripts/test-hosts.py "$RUNNER_TEMP/kura-tests"
